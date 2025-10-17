@@ -1,0 +1,530 @@
+<!doctype html>
+<html lang="zh-Hans">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>远程控制界面（UI 原型）</title>
+<style>
+  :root{
+    --bg:#0c0f14; --card:#141a22; --edge:#1e2631; --ink:#e6eefc; --muted:#8ea2c8; --accent:#4aa3ff;
+    --safe:#33d17a; --warn:#ffd166; --danger:#ff6b6b;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial;
+    color:var(--ink); background:radial-gradient(1200px 800px at 10% -10%,#182131 0,#0c0f14 60%); margin:0; padding:22px;
+  }
+  .wrap{max-width:1280px;margin:0 auto; display:grid; grid-template-columns: 420px 1fr; gap:18px}
+  .card{background:linear-gradient(180deg, #121924, #0f141c); border:1px solid var(--edge);
+        border-radius:14px; padding:14px; box-shadow:0 10px 30px rgba(0,0,0,.35);}
+  h2{margin:0 0 10px; font-size:15px; letter-spacing:.4px; color:#cfe1ff}
+  .pill{display:inline-flex;align-items:center;gap:8px;padding:6px 10px;border-radius:999px;font-size:12px;
+        border:1px solid var(--edge); background:#101723}
+  .connected{box-shadow:0 0 0 1px rgba(51,209,122,.18) inset}
+  .dot{width:8px;height:8px;border-radius:50%}
+  .dot.ok{background:var(--safe)} .dot.no{background:#7a8aa7}
+  .row{display:flex;gap:10px;align-items:center;margin-bottom:10px}
+  .controls{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px}
+  button,select,input[type="number"],input[type="text"]{
+    background:#0f151f; color:var(--ink); border:1px solid var(--edge); border-radius:10px; padding:9px 10px; font-weight:600;
+  }
+  button.primary{background:linear-gradient(180deg,#2b74ff,#1a5de6); border-color:#2b74ff}
+  button.ghost{background:#0f151f}
+  input[type="range"]{width:100%}
+  label{font-size:12px;color:#b9c7e6}
+  .meter{flex:1;background:#0e1520;border:1px solid var(--edge);height:10px;border-radius:999px;overflow:hidden}
+  .bar{height:100%;background:linear-gradient(90deg,#33d17a,#4aa3ff); width:90%}
+  .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace}
+  .small{font-size:12px;color:#96a7c7}
+  .grid{display:grid;gap:10px}
+  .two{grid-template-columns:1fr 1fr}
+  .scope-wrap{display:grid; grid-template-columns: 1fr 280px; gap:12px}
+  /* —— 波形视觉 —— */
+  .osc-wrap{background:#0b1019;border:1px solid var(--edge);border-radius:12px;padding:10px}
+  canvas{display:block}
+  /* —— 镜头取景 —— */
+  .scope{
+    position:relative; width:100%; aspect-ratio:1/1; border-radius:12px; background:#05080e;
+    overflow:hidden; border:1px solid var(--edge); box-shadow:inset 0 0 60px rgba(0,0,0,.6);
+  }
+  .lens{
+    position:absolute; inset:4%; border-radius:50%; overflow:hidden;
+    box-shadow:inset 0 0 120px rgba(0,0,0,.75), 0 0 0 2px rgba(255,255,255,.02) inset;
+  }
+  .hud{position:absolute; inset:0; pointer-events:none; color:#8ff0ff; text-shadow:0 0 8px rgba(0,200,255,.25)}
+  .cross:before,.cross:after{content:""; position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); background:#8ff0ff55}
+  .cross:before{width:1px;height:78%} .cross:after{height:1px;width:78%}
+  .vignette{position:absolute; inset:0; pointer-events:none;
+    background:radial-gradient(circle at 50% 50%, transparent 55%, rgba(0,0,0,.65) 78%, rgba(0,0,0,.92) 100%)}
+  .ticks{position:absolute; inset:9%}
+  .tick{position:absolute; left:50%; top:50%; width:2px;height:10px; background:#8ff0ff66; transform-origin:50% 180px; opacity:.7}
+  footer{max-width:1280px;margin:14px auto 0; color:#637aa2; font-size:12px; text-align:center}
+  @media (max-width:1100px){ .wrap{grid-template-columns:1fr} .scope-wrap{grid-template-columns:1fr} }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <!-- 左：控制台 -->
+  <div class="card">
+    <div class="row" style="justify-content:space-between;margin-bottom:6px">
+      <h2>设备控制台</h2>
+      <div class="pill"><span class="dot no" id="connDot"></span><span id="connText">未连接</span></div>
+    </div>
+
+    <!-- 波形 + 频谱 -->
+    <div class="grid">
+      <div class="osc-wrap">
+        <div class="row" style="justify-content:space-between;margin-bottom:6px">
+          <div class="small">时域波形</div><div class="small">采样 60 FPS · 窗口 5s</div>
+        </div>
+        <canvas id="osc" width="900" height="180" aria-label="oscilloscope"></canvas>
+      </div>
+      <div class="osc-wrap">
+        <div class="row" style="justify-content:space-between;margin-bottom:6px">
+          <div class="small">频谱/声谱条</div><div class="small">8 频段 · 指示强度与节奏成分</div>
+        </div>
+        <canvas id="spectrum" width="900" height="120" aria-label="spectrum"></canvas>
+      </div>
+    </div>
+
+    <div class="controls">
+      <button id="connect" class="primary">连接</button>
+      <button id="disconnect" class="ghost">断开</button>
+    </div>
+
+    <div class="row"><label style="width:64px">强度</label><input id="lvl" type="range" min="0" max="10" value="6"/><div class="mono" style="width:40px;text-align:right" id="lvlVal">6</div></div>
+
+    <div class="row">
+      <label style="width:64px">模式</label>
+      <select id="mode" style="flex:1">
+        <option value="steady">稳态</option>
+        <option value="pulse">脉冲</option>
+        <option value="wave">波形</option>
+        <option value="heartbeat">心跳</option>
+        <option value="random">随机</option>
+        <option value="tempo">节拍</option>
+        <option value="pattern">自定义序列</option>
+      </select>
+    </div>
+
+    <!-- 模式参数 -->
+    <div id="modePanel" class="grid two" style="margin-top:6px">
+      <div class="row mode-row" data-mode="pulse"><label style="width:80px">脉冲时长</label><input id="pulseMs" type="number" min="40" max="2000" value="240"/><span class="small">ms</span></div>
+      <div class="row mode-row" data-mode="wave"><label style="width:80px">频率</label><input id="waveHz" type="number" min="1" max="20" value="5"/><span class="small">Hz</span></div>
+      <div class="row mode-row" data-mode="heartbeat"><label style="width:80px">心跳强度</label><input id="hbLvl" type="range" min="0" max="10" value="7"/><div class="mono" style="width:40px;text-align:right" id="hbVal">7</div></div>
+      <div class="row mode-row" data-mode="tempo"><label style="width:80px">BPM</label><input id="bpm" type="number" min="40" max="220" value="80"/></div>
+      <div class="row mode-row" data-mode="random"><label style="width:80px">变化速度</label><input id="randMs" type="number" min="50" max="2000" value="320"/><span class="small">ms</span></div>
+      <div class="row mode-row" data-mode="pattern" style="grid-column:1/-1">
+        <label style="width:80px">序列</label>
+        <input id="pattern" type="text" placeholder="8:300,4:200,10:500,0:200" style="flex:1"/>
+        <button id="patDemo" class="ghost">示例</button>
+        <button id="patPlay" class="ghost">播放</button>
+      </div>
+    </div>
+
+    <div class="controls" style="margin-top:6px">
+      <button id="start" class="primary">开始</button>
+      <button id="stop" class="ghost">停止</button>
+    </div>
+
+    <div class="row" style="margin-top:8px">
+      <span class="small">电量</span>
+      <div class="meter"><div id="batBar" class="bar"></div></div>
+      <div id="batPct" class="mono small">90%</div>
+    </div>
+
+    <div class="row" style="margin-top:6px;gap:8px;flex-wrap:wrap">
+      <button id="recStart" class="ghost">开始录屏</button>
+      <button id="recStop" class="ghost" disabled>停止录屏</button>
+      <button id="snap" class="ghost">波形截图</button>
+    </div>
+  </div>
+
+  <!-- 右：内窥镜“深度”镜头 -->
+  <div class="card">
+    <h2>镜头视图</h2>
+    <div class="scope-wrap">
+      <div class="scope">
+        <div class="lens">
+          <canvas id="scope" width="1024" height="1024" style="width:100%;height:100%"></canvas>
+          <div class="hud">
+            <div class="cross"></div>
+            <div class="ticks" id="tickRing"></div>
+            <div class="mono" style="position:absolute;left:16px;top:12px">DEPTH <span id="dR">45</span> mm</div>
+            <div class="mono" style="position:absolute;right:16px;top:12px">TILT <span id="tR">8</span>°</div>
+            <div class="mono" style="position:absolute;left:16px;bottom:12px">FOCUS <span id="fR">0.70</span></div>
+            <div class="mono" style="position:absolute;right:16px;bottom:12px">APERTURE <span id="aR">0.80</span></div>
+          </div>
+          <div class="vignette"></div>
+        </div>
+      </div>
+      <div>
+        <div class="row"><label style="width:92px">探头深度</label><input id="depth" type="range" min="0" max="120" value="45" style="flex:1"/><div class="mono" style="width:52px;text-align:right"><span id="dV">45</span>mm</div></div>
+        <div class="row"><label style="width:92px">倾角</label><input id="tilt" type="range" min="-30" max="30" value="8" style="flex:1"/><div class="mono" style="width:52px;text-align:right"><span id="tV">8</span>°</div></div>
+        <div class="row"><label style="width:92px">焦距</label><input id="focus" type="range" min="0.2" max="1.2" step="0.01" value="0.70" style="flex:1"/><div class="mono" style="width:52px;text-align:right"><span id="fV">0.70</span></div></div>
+        <div class="row"><label style="width:92px">光圈/亮度</label><input id="aperture" type="range" min="0.2" max="1.2" step="0.01" value="0.80" style="flex:1"/><div class="mono" style="width:52px;text-align:right"><span id="aV">0.80</span></div></div>
+        <div class="row"><label style="width:92px">抖动</label><input id="jitter" type="range" min="0" max="1" step="0.01" value="0.06" style="flex:1"/><div class="mono" style="width:52px;text-align:right"><span id="jV">0.06</span></div></div>
+        <div class="row" style="gap:8px;flex-wrap:wrap">
+          <button id="fwd" class="ghost">前进 +5mm</button>
+          <button id="back" class="ghost">后退 -5mm</button>
+          <button id="shot" class="ghost">镜头截图</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<footer>
+  本页面为 UI 原型，不连接真实硬件、不发送蓝牙/网络指令。请在合法且经对方明确同意的前提下使用任何真实远程控制功能。
+</footer>
+
+<script>
+/* ---------- 连接/控制状态 ---------- */
+const connDot = document.getElementById('connDot');
+const connText= document.getElementById('connText');
+const connect = document.getElementById('connect');
+const disconnect = document.getElementById('disconnect');
+const lvl = document.getElementById('lvl');
+const lvlVal = document.getElementById('lvlVal');
+const mode = document.getElementById('mode');
+const pulseMs = document.getElementById('pulseMs');
+const waveHz = document.getElementById('waveHz');
+const hbLvl = document.getElementById('hbLvl'); const hbVal = document.getElementById('hbVal');
+const bpm = document.getElementById('bpm');
+const randMs = document.getElementById('randMs');
+const pattern = document.getElementById('pattern');
+const patDemo = document.getElementById('patDemo');
+const patPlay = document.getElementById('patPlay');
+const startBtn = document.getElementById('start');
+const stopBtn  = document.getElementById('stop');
+const batBar = document.getElementById('batBar');
+const batPct = document.getElementById('batPct');
+
+let connected=false, running=false, battery=90;
+lvl.oninput=()=> lvlVal.textContent = lvl.value;
+hbLvl.oninput=()=> hbVal.textContent = hbLvl.value;
+
+connect.onclick=()=>{ connected=true; connDot.classList.remove('no'); connDot.classList.add('ok'); connText.textContent='已连接'; };
+disconnect.onclick=()=>{ connected=false; connDot.classList.remove('ok'); connDot.classList.add('no'); connText.textContent='未连接'; running=false; };
+
+setInterval(()=>{ if(running){ battery=Math.max(0,battery-0.05); batBar.style.width=battery+'%'; batPct.textContent=Math.round(battery)+'%'; }},1000);
+
+/* ---------- 波形与频谱（更仿真） ---------- */
+const osc = document.getElementById('osc'), octx=osc.getContext('2d');
+const spec = document.getElementById('spectrum'), sctx=spec.getContext('2d');
+const SR = 60, WINDOW = 5; // 5 秒窗口
+const maxN = SR*WINDOW;
+const buf = []; // 0..1 能量
+function pushSample(v){ buf.push(Math.max(0,Math.min(1,v))); if(buf.length>maxN) buf.shift(); }
+function drawOsc(){
+  const W=osc.width, H=osc.height, mid=H/2;
+  octx.clearRect(0,0,W,H);
+  // 背景格
+  octx.strokeStyle='#172235'; octx.lineWidth=1;
+  for(let x=0;x<W;x+=50){ octx.beginPath(); octx.moveTo(x,0); octx.lineTo(x,H); octx.stroke(); }
+  for(let y=0;y<H;y+=30){ octx.beginPath(); octx.moveTo(0,y); octx.lineTo(W,y); octx.stroke(); }
+  // 中线
+  octx.strokeStyle='#223149'; octx.beginPath(); octx.moveTo(0,mid); octx.lineTo(W,mid); octx.stroke();
+
+  // 包络填充
+  if(buf.length){
+    const step = W/maxN;
+    octx.beginPath();
+    for(let i=0;i<buf.length;i++){
+      const amp = buf[i]* (H*0.42);
+      const noise = (Math.random()-0.5)*2;
+      const y = mid - amp + noise;
+      const x = i*step;
+      if(i===0) octx.moveTo(x,y); else octx.lineTo(x,y);
+    }
+    for(let i=buf.length-1;i>=0;i--){
+      const amp = buf[i]* (H*0.42);
+      const y = mid + amp;
+      const x = i*step;
+      octx.lineTo(x,y);
+    }
+    const grad=octx.createLinearGradient(0,0,0,H);
+    grad.addColorStop(0,'rgba(74,163,255,.95)'); grad.addColorStop(1,'rgba(74,163,255,.12)');
+    octx.fillStyle=grad; octx.fill();
+    octx.lineWidth=1.8; octx.strokeStyle='#4aa3ff'; octx.stroke();
+  }
+  requestAnimationFrame(drawOsc);
+}
+requestAnimationFrame(drawOsc);
+
+// 简易 8 段“频谱”：对最近 0.5s 进行粗分段统计
+function drawSpec(){
+  const W=spec.width, H=spec.height;
+  sctx.clearRect(0,0,W,H);
+  const bands = 8, win = Math.min(buf.length, Math.round(SR*0.5));
+  for(let b=0;b<bands;b++){
+    // 用不同的相位/频率权重构造“伪频谱”（更像真实柱）
+    let acc=0, n=0;
+    for(let i=buf.length-win;i<buf.length;i++){
+      if(i<0) continue;
+      const w = Math.sin((i/(SR))*(b+1)*1.7 + b)*0.5+0.5; // 0..1
+      acc += buf[i]*w; n++;
+    }
+    const val = (n? acc/n : 0);
+    const bw = (W- (bands+1)*10)/bands, x = 10 + b*(bw+10);
+    const h = val * (H*0.9);
+    // 柱体
+    const grad=sctx.createLinearGradient(0,H-h,0,H);
+    grad.addColorStop(0,'#60e7a0'); grad.addColorStop(1,'#2f6aff');
+    sctx.fillStyle = grad;
+    sctx.fillRect(x, H-h, bw, h);
+    // 顶部小帽
+    sctx.fillStyle = 'rgba(255,255,255,.25)';
+    sctx.fillRect(x, H-h-3, bw, 3);
+  }
+  requestAnimationFrame(drawSpec);
+}
+requestAnimationFrame(drawSpec);
+
+/* ---------- 模式合成：推动“能量样本” ---------- */
+let tick=null;
+function startRun(){
+  if(!connected || running) return;
+  running=true;
+  const L=()=>Number(lvl.value)/10;
+  const t0=performance.now();
+  const pulse=()=>Math.random()<0.65?1:0;
+  const rand=()=>Math.random();
+
+  if(tick) cancelAnimationFrame(tick);
+  const loop=()=>{
+    if(!running){ return; }
+    const t = (performance.now()-t0)/1000;
+    let v = 0.05; // 基线
+    switch(mode.value){
+      case 'steady': v = L()*0.9; break;
+      case 'wave': {
+        const f = Math.max(1, Number(waveHz.value)||4);
+        v = (Math.sin(t*2*Math.PI*f)+1)/2 * L()*0.95;
+        break;
+      }
+      case 'pulse': {
+        const on = Math.floor(t*1000/(Number(pulseMs.value)||240))%2===0;
+        v = (on? L(): 0.02);
+        break;
+      }
+      case 'heartbeat': {
+        const base = Number(hbLvl.value)/10;
+        const phase = Math.floor((t*3) % 6);
+        v = (phase===0? base : phase===2? base*0.8 : 0.04);
+        break;
+      }
+      case 'random': {
+        v = rand() * L(); break;
+      }
+      case 'tempo': {
+        const beat = 60/(Number(bpm.value)||80);
+        const inBeat = (t%beat) < Math.min(0.22, beat*0.35);
+        v = inBeat? L(): 0.03;
+        break;
+      }
+      case 'pattern': {
+        v = patternPlayer.active ? patternPlayer.currentLevel : 0.04;
+        break;
+      }
+    }
+    // 轻微抖动/噪声
+    v = Math.max(0, Math.min(1, v + (Math.random()-0.5)*0.03));
+    pushSample(v);
+    tick = requestAnimationFrame(loop);
+  };
+  loop();
+}
+function stopRun(){ running=false; }
+
+/* ---------- 自定义序列播放器 ---------- */
+const patternPlayer = {
+  seq:[], idx:0, active:false, currentLevel:0,
+  parse(txt){
+    const arr = txt.split(',').map(s=>s.trim()).filter(Boolean);
+    const out=[];
+    for(const p of arr){
+      const m=p.match(/^(\d{1,2})\s*:\s*(\d{1,5})$/);
+      if(!m) return null;
+      out.push({level:Math.max(0,Math.min(10,Number(m[1]))), dur:Math.max(20,Number(m[2]))});
+    }
+    return out;
+  },
+  async play(txt){
+    const seq=this.parse(txt); if(!seq){ alert('序列格式应为：强度:时长(ms)，以逗号分隔'); return; }
+    this.seq=seq; this.idx=0; this.active=true;
+    while(this.active && this.idx<seq.length){
+      const step=seq[this.idx]; this.currentLevel = step.level/10;
+      await new Promise(r=>setTimeout(r, step.dur));
+      this.idx++;
+    }
+    this.active=false; this.currentLevel=0;
+  }
+};
+patDemo.onclick=()=> pattern.value='8:300,4:200,10:500,0:200';
+patPlay.onclick = ()=> patternPlayer.play(pattern.value);
+
+/* ---------- 控制按钮 ---------- */
+startBtn.onclick = ()=> startRun();
+stopBtn.onclick  = ()=> stopRun();
+
+/* ---------- 波形截图与录屏 ---------- */
+document.getElementById('snap').onclick=()=>{
+  const a=document.createElement('a');
+  a.download=`wave_${Date.now()}.png`;
+  a.href=osc.toDataURL('image/png'); a.click();
+};
+
+let recorder=null, recChunks=[];
+document.getElementById('recStart').onclick=()=>{
+  const stream = osc.captureStream(60); // 60fps 录制波形画面
+  recorder = new MediaRecorder(stream, {mimeType:'video/webm;codecs=vp9'});
+  recChunks=[];
+  recorder.ondataavailable=e=> recChunks.push(e.data);
+  recorder.onstop=()=>{
+    const blob=new Blob(recChunks,{type:'video/webm'});
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement('a'); a.href=url; a.download=`wave_${Date.now()}.webm`; a.click();
+    URL.revokeObjectURL(url);
+  };
+  recorder.start();
+  document.getElementById('recStart').disabled=true;
+  document.getElementById('recStop').disabled=false;
+};
+document.getElementById('recStop').onclick=()=>{
+  if(recorder && recorder.state!=='inactive'){ recorder.stop(); }
+  document.getElementById('recStart').disabled=false;
+  document.getElementById('recStop').disabled=true;
+};
+
+/* ---------- 镜头（更仿真材质/光照/景深） ---------- */
+const scope = document.getElementById('scope'), s2=scope.getContext('2d');
+const depth = document.getElementById('depth'), tilt = document.getElementById('tilt');
+const focus = document.getElementById('focus'), aperture = document.getElementById('aperture'), jitter = document.getElementById('jitter');
+const dV = document.getElementById('dV'), tV = document.getElementById('tV'), fV = document.getElementById('fV'), aV = document.getElementById('aV'), jV = document.getElementById('jV');
+const dR = document.getElementById('dR'), tR = document.getElementById('tR'), fR = document.getElementById('fR'), aR = document.getElementById('aR');
+
+[depth,tilt,focus,aperture,jitter].forEach(el=> el.addEventListener('input', ()=>{
+  dV.textContent=dR.textContent=depth.value;
+  tV.textContent=tR.textContent=tilt.value;
+  fV.textContent=fR.textContent=Number(focus.value).toFixed(2);
+  aV.textContent=aR.textContent=Number(aperture.value).toFixed(2);
+  jV.textContent=Number(jitter.value).toFixed(2);
+}));
+
+// 生成更仿真的“柔组织纹理”：多频噪声 + 环形褶皱 + 湿润高光
+function noise2D(x,y,seed){
+  // 简易 hash 噪声（够用且短小）
+  const s = Math.sin(x*127.1 + y*311.7 + seed*13.7)*43758.5453;
+  return s - Math.floor(s);
+}
+function fbm(x,y,seed,oct=5){
+  let v=0, amp=0.5, freq=1.0;
+  for(let i=0;i<oct;i++){
+    v += amp * noise2D(x*freq,y*freq,seed+i*7.3);
+    freq *= 2.02; amp *= 0.53;
+  }
+  return v;
+}
+
+function drawScope(){
+  const w=scope.width, h=scope.height;
+  const t = performance.now()/1000;
+  s2.clearRect(0,0,w,h);
+
+  const dmm = Number(depth.value), tiltDeg=Number(tilt.value);
+  const foc = Number(focus.value), ap = Number(aperture.value), jit = Number(jitter.value);
+
+  // 视图变换（越深越放大，加入轻微抖动）
+  const scale = 1.0 + dmm/130;
+  const jx = (Math.random()-0.5)*jit*12, jy=(Math.random()-0.5)*jit*12;
+  s2.save();
+  s2.translate(w/2 + jx, h/2 + jy);
+  s2.scale(scale, scale);
+  s2.rotate(tiltDeg * Math.PI/180 * 0.18);
+
+  // 背景暗红渐层
+  const rg=s2.createRadialGradient(0,0,90, 0,0,480);
+  rg.addColorStop(0, `rgba(205, 70, 90, ${0.30*ap})`);
+  rg.addColorStop(0.55, `rgba(160, 45, 75, ${0.48*ap})`);
+  rg.addColorStop(1, `rgba(20, 10, 25, 0.98)`);
+  s2.fillStyle=rg; s2.beginPath(); s2.arc(0,0,520,0,Math.PI*2); s2.fill();
+
+  // 生成纹理
+  const R=460, step=6; // 步长越小越细腻
+  for(let ang=0; ang<Math.PI*2; ang+=0.035){
+    const rr = R - 120 + Math.sin(ang*5 + t*1.2)*3;
+    for(let r=80; r<rr; r+=step){
+      const x = Math.cos(ang)*r, y=Math.sin(ang)*r;
+      const u = (x+500)/260, v=(y+500)/260;
+      // 多频噪声形成微褶皱
+      let n = fbm(u + t*0.15, v - t*0.12, 17, 4);
+      // 环形波叠加
+      const wave = Math.sin(r*0.055 + t*0.9)*0.5+0.5;
+      const tissue = 0.55*n + 0.45*wave;
+
+      // 颜色/亮度（受光圈/焦距影响）
+      let L = 30 + tissue*55; // 亮度
+      L *= ap; // 光圈越大越亮
+      // 景深：离“焦平面”越远越模糊 & 暗
+      const dist = Math.abs(r - 260);
+      const depthFall = Math.max(0.65, 1.0 - (dist/300)*(1.3 - foc));
+      L *= depthFall;
+
+      // 湿润高光：在局部添加镜面锯齿
+      const spec = Math.max(0, Math.cos(ang*3 - t*1.8))**8 * (0.6*ap);
+      const Rv = Math.min(255, Math.floor(140 + L*1.1 + spec*110));
+      const Gv = Math.min(255, Math.floor(60  + L*0.6 + spec*80));
+      const Bv = Math.min(255, Math.floor(80  + L*0.9 + spec*120));
+      s2.fillStyle = `rgba(${Rv},${Gv},${Bv},0.18)`;
+      s2.fillRect(x,y, step+1, step+1);
+    }
+  }
+
+  // 雾化（景深模糊）
+  s2.filter = `blur(${(1.8 - foc)*2.2}px)`;
+  s2.globalAlpha = 0.9;
+  s2.drawImage(scope, -w/2, -h/2); // 轻度自绘合成
+  s2.filter = 'none'; s2.globalAlpha=1.0;
+
+  // 流动液体高光点
+  for(let k=0;k<140;k++){
+    const a = k*0.045 + t*0.25;
+    const rr = 120 + (k%40)*8 + Math.sin(a*2+t)*2;
+    const x = Math.cos(a)*rr, y=Math.sin(a)*rr;
+    const s = 1.2 + ((k%6)/6)*2.0 * foc;
+    s2.fillStyle = `rgba(255,255,255,${0.04+0.18*ap})`;
+    s2.beginPath(); s2.arc(x,y,s,0,Math.PI*2); s2.fill();
+  }
+
+  s2.restore();
+  requestAnimationFrame(drawScope);
+}
+requestAnimationFrame(drawScope);
+
+// 刻度环
+const tickRing = document.getElementById('tickRing');
+for(let i=0;i<16;i++){
+  const e=document.createElement('div'); e.className='tick';
+  e.style.transform=`translate(-1px,-5px) rotate(${(i/16)*360}deg)`;
+  tickRing.appendChild(e);
+}
+
+// 镜头截图
+document.getElementById('shot').onclick=()=>{
+  const a=document.createElement('a');
+  a.download=`lens_${Date.now()}.png`;
+  a.href = scope.toDataURL('image/png');
+  a.click();
+};
+
+// 深度微调
+document.getElementById('fwd').onclick=()=>{ depth.value=Math.min(120, Number(depth.value)+5); depth.dispatchEvent(new Event('input')); };
+document.getElementById('back').onclick=()=>{ depth.value=Math.max(0, Number(depth.value)-5); depth.dispatchEvent(new Event('input')); };
+
+// 初始值同步
+[depth,tilt,focus,aperture,jitter].forEach(el=> el.dispatchEvent(new Event('input')));
+</script>
+</body>
+</html>
