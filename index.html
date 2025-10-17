@@ -1,0 +1,525 @@
+<!doctype html>
+<html lang="zh-Hans">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>演示：虚拟控制 + 波形动画 + 内窥镜深度（纯模拟）</title>
+<style>
+  :root{
+    --bg:#f5f7fb; --card:#fff; --muted:#6b7280; --accent:#0b63ff;
+    --safe:#067a3f; --danger:#9f2a1a;
+  }
+  *{box-sizing:border-box}
+  body{font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial; background:var(--bg); margin:0; padding:24px; color:#111;}
+  .wrap{max-width:1180px;margin:0 auto; display:grid; grid-template-columns: 380px 1fr; gap:20px;}
+  .card{background:var(--card); border-radius:12px; padding:16px; box-shadow:0 8px 24px rgba(18,24,40,0.06);}
+  h2{margin:0 0 12px;font-size:16px}
+  .pill{display:inline-block;padding:6px 10px;border-radius:999px;font-size:13px}
+  .connected{background:#e6ffef;color:var(--safe);border:1px solid #b6f1d2}
+  .disconnected{background:#fff2f0;color:var(--danger);border:1px solid #f6c9c4}
+  .bigvis{font-size:40px;text-align:center;color:var(--muted);margin:10px 0 6px; min-height:48px}
+  label{font-size:13px;color:#333}
+  .row{display:flex;gap:8px;align-items:center;margin-bottom:10px}
+  input[type="range"]{width:100%}
+  select,input[type="number"],button,textarea,input[type="text"]{font-family:inherit;padding:8px;border-radius:8px;border:1px solid #e6e9ef}
+  button{background:var(--accent);color:white;border:none;cursor:pointer;font-weight:600}
+  button.alt{background:#f0f2f7;color:#111}
+  .controls{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px}
+  .log{font-size:12px;color:#444;background:#fafafa;padding:8px;border-radius:8px;height:160px;overflow:auto;border:1px solid #eee}
+  .small{font-size:12px;color:#666}
+  .preset-list{display:flex;gap:8px;flex-wrap:wrap}
+  .preset-item{padding:6px 8px;background:#f6f7fb;border-radius:8px;border:1px solid #e6e9ef;font-size:13px}
+  .battery{font-weight:700}
+  .viz-grid{display:grid;grid-template-columns: 1fr; gap:12px}
+  .scope-wrap{display:grid; grid-template-columns: 1fr 260px; gap:12px}
+  .scope{
+    position:relative; width:100%; aspect-ratio:1/1; border-radius:12px; background:#0b0f18; 
+    display:flex; align-items:center; justify-content:center; overflow:hidden;
+  }
+  /* 圆形取景框 */
+  .lens{
+    position:relative; width:92%; aspect-ratio:1/1; border-radius:50%;
+    background:radial-gradient(ellipse at center, rgba(255,255,255,0.12) 0%, rgba(255,255,255,0.04) 35%, rgba(0,0,0,0.4) 70%, rgba(0,0,0,0.85) 100%);
+    box-shadow:inset 0 0 60px rgba(0,0,0,0.65), inset 0 0 6px rgba(255,255,255,0.08);
+    overflow:hidden;
+  }
+  .scope-hud{
+    position:absolute; inset:0; pointer-events:none; color:#5af2ff;
+    font-size:12px; text-shadow:0 0 6px rgba(90,242,255,0.35);
+  }
+  .hud-cross:before, .hud-cross:after{
+    content:""; position:absolute; left:50%; top:50%; transform:translate(-50%,-50%);
+    background:#5af2ff; opacity:.55;
+  }
+  .hud-cross:before{ width:1px; height:70%;}
+  .hud-cross:after{ height:1px; width:70%;}
+  .depth-ticks{
+    position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+  }
+  .ticks-ring{
+    position:absolute; width:84%; height:84%; border-radius:50%; box-shadow:0 0 0 1px rgba(90,242,255,0.25) inset;
+  }
+  .tick{
+    position:absolute; width:2px; height:8px; background:#5af2ff; opacity:.55; transform-origin:50% 160px;
+  }
+  .scope-overlay{
+    position:absolute; inset:0; background:radial-gradient(circle at 50% 50%, transparent 60%, rgba(0,0,0,0.7) 75%, rgba(0,0,0,0.92) 100%);
+    pointer-events:none;
+  }
+  .scope-side{
+    background:#0b0f18; border-radius:12px; color:#cfd7ff; padding:12px; border:1px solid rgba(255,255,255,0.06)
+  }
+  .btn-row{display:flex; gap:8px; flex-wrap:wrap}
+  .mt8{margin-top:8px}
+  .mono{font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;}
+  @media (max-width:1000px){ .wrap{grid-template-columns:1fr} .scope-wrap{grid-template-columns:1fr} }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <!-- 左侧：主控制 -->
+  <div class="card" aria-labelledby="title">
+    <h2 id="title">虚拟控制面板（仅模拟）</h2>
+
+    <div class="row">
+      <div id="connPill" class="pill disconnected">未连接</div>
+      <div class="small" style="margin-left:auto">设备：虚拟型号 X-100（演示）</div>
+    </div>
+
+    <div class="bigvis" id="vibeVisual">— —</div>
+
+    <!-- 新增：实时波形动画 -->
+    <div class="viz-grid">
+      <div>
+        <div class="row" style="justify-content:space-between;margin-bottom:6px">
+          <div class="small">波形视图（SVG，实时）</div>
+          <div class="small">采样率 60 FPS · 窗口 4s</div>
+        </div>
+        <svg id="waveSVG" viewBox="0 0 800 160" style="width:100%;height:auto;border:1px solid #e6e9ef;border-radius:10px;background:#ffffff">
+          <defs>
+            <linearGradient id="g1" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stop-color="#0b63ff" stop-opacity="0.9"/>
+              <stop offset="100%" stop-color="#0b63ff" stop-opacity="0.15"/>
+            </linearGradient>
+          </defs>
+          <rect x="0" y="0" width="800" height="160" fill="url(#bgGrid)"></rect>
+          <path id="wavePath" d="" fill="url(#g1)" stroke="#0b63ff" stroke-width="2" />
+          <!-- 中线 -->
+          <line x1="0" y1="80" x2="800" y2="80" stroke="#e6e9ef" stroke-dasharray="4 4"/>
+        </svg>
+      </div>
+    </div>
+
+    <div class="controls">
+      <button id="connectBtn">连接（模拟）</button>
+      <button id="disconnectBtn" class="alt">断开（模拟）</button>
+    </div>
+
+    <div class="row"><label for="intensity">强度</label><div style="flex:1"><input id="intensity" type="range" min="0" max="10" value="5"/></div><div style="width:36px;text-align:center;font-weight:700" id="level">5</div></div>
+
+    <div class="row">
+      <label for="mode">模式</label>
+      <select id="mode" style="flex:1">
+        <option value="stopped">停止</option>
+        <option value="steady">稳态 (Steady)</option>
+        <option value="pulse">脉冲 (Pulse)</option>
+        <option value="wave">波形 (Wave)</option>
+        <option value="heartbeat">心跳 (Heartbeat)</option>
+        <option value="rampUp">渐强 (Ramp Up)</option>
+        <option value="rampDown">渐弱 (Ramp Down)</option>
+        <option value="random">随机 (Random)</option>
+        <option value="tempo">节拍 (Tempo)</option>
+        <option value="pattern">自定义序列 (Pattern)</option>
+      </select>
+    </div>
+
+    <!-- 模式参数（与之前版本一致，略有精简） -->
+    <div id="modeControls" style="margin-bottom:12px">
+      <div class="row mode-row" data-mode="pulse" style="display:none">
+        <label style="width:78px">脉冲时长</label>
+        <input id="pulseDur" type="number" min="50" max="2000" value="300" /> ms
+      </div>
+      <div class="row mode-row" data-mode="wave" style="display:none">
+        <label style="width:78px">波形频率</label>
+        <input id="waveFreq" type="number" min="1" max="20" value="4" /> Hz
+      </div>
+      <div class="row mode-row" data-mode="heartbeat" style="display:none">
+        <label style="width:78px">心跳强度</label>
+        <input id="hbStrength" type="range" min="0" max="10" value="6" style="flex:1"/><div id="hbVal" style="width:36px;text-align:center">6</div>
+      </div>
+      <div class="row mode-row" data-mode="rampUp" style="display:none">
+        <label style="width:78px">步长</label>
+        <input id="rampStep" type="number" min="1" max="5" value="1" />
+      </div>
+      <div class="row mode-row" data-mode="rampDown" style="display:none">
+        <label style="width:78px">步长</label>
+        <input id="rampStep2" type="number" min="1" max="5" value="1" />
+      </div>
+      <div class="row mode-row" data-mode="random" style="display:none">
+        <label style="width:78px">随机速度</label>
+        <input id="randSpeed" type="number" min="60" max="2000" value="400" /> ms
+      </div>
+      <div class="row mode-row" data-mode="tempo" style="display:none">
+        <label style="width:78px">BPM</label>
+        <input id="bpm" type="number" min="40" max="240" value="80" />
+      </div>
+      <div class="mode-row" data-mode="pattern" style="display:none">
+        <div class="row" style="width:100%">
+          <label style="width:78px">序列</label>
+          <input id="patternInput" placeholder="例：8:300,4:200,10:500,0:200" style="flex:1" />
+          <button id="loadPattern" class="alt">示例</button>
+          <button id="playPattern" class="alt">播放</button>
+        </div>
+        <div class="small" style="margin-left:78px;margin-top:-4px">格式：强度(0-10):时长(ms)，逗号分隔</div>
+      </div>
+    </div>
+
+    <div style="display:flex;gap:8px;margin-bottom:12px">
+      <button id="startBtn">开始（模拟）</button>
+      <button id="stopBtn" class="alt">停止（模拟）</button>
+    </div>
+
+    <div class="row" style="align-items:center">
+      <div class="small">电量</div>
+      <div style="flex:1;background:#f3f6ff;border-radius:8px;height:10px;margin:0 8px;overflow:hidden;border:1px solid #e6e9ef">
+        <div id="batteryBar" style="height:100%;width:92%;background:linear-gradient(90deg,#67d17a,#0b9cff)"></div>
+      </div>
+      <div class="battery small" id="batteryPct">92%</div>
+    </div>
+
+    <h2 style="margin-top:14px">演示日志</h2>
+    <div class="log" id="logBox" aria-live="polite">页面已加载 — 纯模拟前端界面。</div>
+  </div>
+
+  <!-- 右侧：内窥镜“深度”模块 -->
+  <div class="card">
+    <h2>“深度”模块（模拟内窥镜头）</h2>
+    <div class="scope-wrap">
+      <!-- 取景区 -->
+      <div class="scope">
+        <div class="lens">
+          <canvas id="scopeCanvas" width="1024" height="1024" style="width:100%;height:100%"></canvas>
+          <div class="scope-hud">
+            <div class="hud-cross"></div>
+            <div class="depth-ticks">
+              <div class="ticks-ring" id="ticks"></div>
+            </div>
+            <div style="position:absolute; left:10px; top:10px;" class="mono">DEPTH: <span id="depthRead">45</span> mm</div>
+            <div style="position:absolute; right:10px; top:10px;" class="mono">TILT: <span id="tiltRead">8</span>°</div>
+            <div style="position:absolute; left:10px; bottom:10px;" class="mono">FOCUS: <span id="focusRead">0.7</span></div>
+            <div style="position:absolute; right:10px; bottom:10px;" class="mono">APERTURE: <span id="apRead">0.8</span></div>
+          </div>
+          <div class="scope-overlay"></div>
+        </div>
+      </div>
+
+      <!-- 控制区 -->
+      <div class="scope-side">
+        <div class="row"><label style="width:92px">探头深度</label><input id="depth" type="range" min="0" max="120" value="45" style="flex:1"/><div class="mono" style="width:50px;text-align:right"><span id="depthVal">45</span>mm</div></div>
+        <div class="row"><label style="width:92px">倾角</label><input id="tilt" type="range" min="-30" max="30" value="8" style="flex:1"/><div class="mono" style="width:50px;text-align:right"><span id="tiltVal">8</span>°</div></div>
+        <div class="row"><label style="width:92px">焦距</label><input id="focus" type="range" min="0.2" max="1.2" step="0.01" value="0.70" style="flex:1"/><div class="mono" style="width:50px;text-align:right"><span id="focusVal">0.70</span></div></div>
+        <div class="row"><label style="width:92px">光圈/亮度</label><input id="aperture" type="range" min="0.2" max="1.2" step="0.01" value="0.80" style="flex:1"/><div class="mono" style="width:50px;text-align:right"><span id="apertureVal">0.80</span></div></div>
+        <div class="row"><label style="width:92px">抖动</label><input id="jitter" type="range" min="0" max="1" step="0.01" value="0.08" style="flex:1"/><div class="mono" style="width:50px;text-align:right"><span id="jitterVal">0.08</span></div></div>
+        <div class="btn-row mt8">
+          <button id="depthAdvance">前进+5mm</button>
+          <button id="depthRetract" class="alt">后退-5mm</button>
+          <button id="capture" class="alt">拍照（模拟）</button>
+        </div>
+        <div class="small" style="margin-top:10px;line-height:1.5">
+          • 这是一台“虚拟”镜头：画面是程序生成的解剖样式纹理（并非真实人体）。<br>
+          • 控件只影响视觉模拟效果；截图将下载为 PNG。
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<footer style="max-width:1180px;margin:14px auto 0;color:#666;font-size:13px">
+  免责声明：本页面为演示/教学用途，**不会**连接真实硬件或发送任何控制指令。请勿用于未经同意的远程控制或欺骗他人行为。
+</footer>
+
+<script>
+  /* ============ 公共元素/状态 ============ */
+  const connPill = document.getElementById('connPill');
+  const connectBtn = document.getElementById('connectBtn');
+  const disconnectBtn = document.getElementById('disconnectBtn');
+  const intensity = document.getElementById('intensity');
+  const level = document.getElementById('level');
+  const mode = document.getElementById('mode');
+  const startBtn = document.getElementById('startBtn');
+  const stopBtn = document.getElementById('stopBtn');
+  const vibeVisual = document.getElementById('vibeVisual');
+  const logBox = document.getElementById('logBox');
+  const modeControls = document.getElementById('modeControls');
+  const batteryBar = document.getElementById('batteryBar');
+  const batteryPct = document.getElementById('batteryPct');
+
+  const pulseDur = document.getElementById('pulseDur');
+  const waveFreq = document.getElementById('waveFreq');
+  const hbStrength = document.getElementById('hbStrength');
+  const hbVal = document.getElementById('hbVal');
+  const rampStep = document.getElementById('rampStep');
+  const rampStep2 = document.getElementById('rampStep2');
+  const randSpeed = document.getElementById('randSpeed');
+  const bpm = document.getElementById('bpm');
+  const patternInput = document.getElementById('patternInput');
+  const loadPattern = document.getElementById('loadPattern');
+  const playPattern = document.getElementById('playPattern');
+
+  let connected=false, running=false, animTimer=null, battery=92;
+
+  function log(t){ const ts=new Date().toLocaleTimeString(); logBox.innerText = `${ts} — ${t}\n` + logBox.innerText; }
+  function setConnected(v){
+    connected=v;
+    if(v){ connPill.className='pill connected'; connPill.innerText='已连接（模拟）'; log('与虚拟设备建立连接（模拟）。'); }
+    else { connPill.className='pill disconnected'; connPill.innerText='未连接'; log('与虚拟设备断开连接（模拟）。'); stopSim(); }
+  }
+  function reflect(){
+    level.innerText = intensity.value;
+    hbVal && (hbVal.innerText = hbStrength.value);
+    document.querySelectorAll('.mode-row').forEach(el=>el.style.display='none');
+    document.querySelectorAll(`.mode-row[data-mode="${mode.value}"]`).forEach(el=>el.style.display='flex');
+  }
+  setInterval(()=>{ battery=Math.max(0,battery-(running?0.05:0)); batteryBar.style.width=battery+'%'; batteryPct.innerText=Math.round(battery)+'%'; },1000);
+  connectBtn.onclick=()=>setConnected(true);
+  disconnectBtn.onclick=()=>setConnected(false);
+  intensity.oninput=reflect; mode.onchange=()=>{ reflect(); log('切换模式：'+mode.value); };
+
+  loadPattern.onclick=()=>{ patternInput.value='8:300,4:200,10:500,0:200'; log('载入序列示例'); };
+  playPattern.onclick=()=>{ const seq=parsePattern(patternInput.value); if(!seq){ log('序列格式错误'); return; } running=true; playSequence(seq).then(()=>{running=false}); };
+
+  startBtn.onclick=()=>{
+    if(!connected){ log('无法开始：设备未连接（模拟）。'); return; }
+    if(running){ log('已在运行。'); return; }
+    running=true; log(`开始：${mode.value}, 强度=${intensity.value}`);
+    runMode(mode.value);
+  };
+  stopBtn.onclick=()=>stopSim();
+
+  function stopSim(){
+    if(animTimer){ clearInterval(animTimer); animTimer=null; }
+    running=false; vibeVisual.innerText='— —'; log('停止模拟输出。');
+  }
+  function parsePattern(text){
+    const parts=text.split(',').map(s=>s.trim()).filter(Boolean), out=[];
+    for(const p of parts){ const m=p.match(/^(\d{1,2})\s*:\s*(\d{1,5})$/); if(!m) return null; out.push({level:Math.max(0,Math.min(10,Number(m[1]))), dur:Math.max(20,Number(m[2]))}); }
+    return out;
+  }
+  async function playSequence(seq){
+    for(const step of seq){
+      if(!running) break;
+      vibeVisual.innerText='■'.repeat(Math.max(1,Math.round(step.level/2)));
+      addWaveSample(step.level/10);  // 推一帧到波形
+      await new Promise(r=>setTimeout(r, step.dur));
+      vibeVisual.innerText='·'; await new Promise(r=>setTimeout(r, 80));
+    }
+    log('自定义序列播放完毕（模拟）');
+  }
+  function runMode(m){
+    if(animTimer){ clearInterval(animTimer); animTimer=null; }
+    if(m==='stopped'){ stopSim(); return; }
+    if(m==='steady'){
+      vibeVisual.innerText='●'.repeat(Math.max(1,Math.round(intensity.value/2)));
+      animTimer=setInterval(()=>addWaveSample(intensity.value/10), 1000/30);
+    }
+    if(m==='pulse'){
+      let on=false; const dur=Math.max(40, Number(pulseDur.value)||300), gap=Math.max(80, 600 - intensity.value*40);
+      animTimer=setInterval(()=>{ on=!on; const lv=on?intensity.value/10:0.05; vibeVisual.innerText= on?'🔴'.repeat(Math.max(1,Math.round(intensity.value/2))):'·'.repeat(3); addWaveBurst(lv, dur); }, dur+gap);
+    }
+    if(m==='wave'){
+      let t=0; const f=Math.max(1, Number(waveFreq.value)||4);
+      animTimer=setInterval(()=>{ t+=0.05; const lv = (Math.sin(t*f)+1)/2 * (intensity.value/10); vibeVisual.innerText='~'.repeat(Math.max(1,Math.round(intensity.value/2))); addWaveSample(lv); }, 1000/60);
+    }
+    if(m==='heartbeat'){
+      let step=0;
+      animTimer=setInterval(()=>{ const s=Number(hbStrength.value)||6;
+        if(step%6===0){ vibeVisual.innerText='❤'.repeat(Math.max(1,Math.round(s/3))); addWaveBurst(s/10,100);}
+        else if(step%6===2){ vibeVisual.innerText='❤'.repeat(Math.max(1,Math.round(s/2))); addWaveBurst(s/10*0.8,150);}
+        else { vibeVisual.innerText='·'; addWaveSample(0.05); }
+        step++;
+      }, Math.max(120, 300 - intensity.value*20));
+    }
+    if(m==='rampUp'){
+      let cur=intensity.value|0, stepv=Number(rampStep.value)||1;
+      animTimer=setInterval(()=>{ addWaveSample(cur/10); vibeVisual.innerText='◉'.repeat(Math.max(1,Math.round(cur/2))); cur=Math.min(10,cur+stepv); if(cur>=10){ clearInterval(animTimer); animTimer=null; log('渐强达到上限'); running=false; } }, 100);
+    }
+    if(m==='rampDown'){
+      let cur=intensity.value|0, stepv=Number(rampStep2.value)||1;
+      animTimer=setInterval(()=>{ addWaveSample(cur/10); vibeVisual.innerText='◉'.repeat(Math.max(1,Math.round(cur/2))); cur=Math.max(0,cur-stepv); if(cur<=0){ clearInterval(animTimer); animTimer=null; log('渐弱达到下限'); running=false; } }, 100);
+    }
+    if(m==='random'){
+      animTimer=setInterval(()=>{ const lv=Math.random()* (Number(intensity.value)+1)/10; vibeVisual.innerText='◦'.repeat(Math.max(1,Math.round(lv*10/2))); addWaveSample(lv); }, Math.max(60, Number(randSpeed.value)||400));
+    }
+    if(m==='tempo'){
+      const beatMs = Math.round(60000 / (Number(bpm.value)||60)); let on=false;
+      animTimer=setInterval(()=>{ on=!on; const lv=on?intensity.value/10:0.02; vibeVisual.innerText= on?'♩'.repeat(Math.max(1,Math.round(intensity.value/3))):'·'; addWaveBurst(lv, Math.min(200, beatMs*0.35)); }, beatMs);
+      log('节拍模式：BPM='+bpm.value);
+    }
+    if(m==='pattern'){ const seq=parsePattern(patternInput.value); if(!seq){ log('序列解析失败'); running=false; return; } playSequence(seq).then(()=>running=false); }
+  }
+
+  /* ============ 实时波形（SVG） ============ */
+  const waveSVG = document.getElementById('waveSVG');
+  const wavePath = document.getElementById('wavePath');
+  const W = 800, H = 160, mid = H/2;
+  const windowSeconds = 4;              // 显示最近 4 秒
+  const sampleRate = 60;                // 60 FPS
+  const maxSamples = windowSeconds * sampleRate;
+  const samples = [];                   // 0..1 之间的能量值
+  function addWaveSample(v){
+    const clamped = Math.max(0, Math.min(1, v||0));
+    samples.push(clamped);
+    while(samples.length > maxSamples) samples.shift();
+    renderWave();
+  }
+  function addWaveBurst(v, ms){
+    const n = Math.max(1, Math.round(sampleRate * (ms/1000)));
+    for(let i=0;i<n;i++) addWaveSample(v);
+  }
+  function renderWave(){
+    if(samples.length===0){ wavePath.setAttribute('d',''); return; }
+    const stepX = W / maxSamples;
+    let d = `M 0 ${mid}`;
+    for(let i=0;i<samples.length;i++){
+      const x = i*stepX;
+      // 使用平滑包络：振幅 = 样本 * 70px，高斯轻微抖动
+      const amp = samples[i]*70;
+      const noise = (Math.random()-0.5)*2; // 轻微噪声
+      const y = mid - amp + noise;
+      d += ` L ${x.toFixed(2)} ${y.toFixed(2)}`;
+    }
+    // 闭合到中线以形成填充区域
+    d += ` L ${W} ${mid} L 0 ${mid} Z`;
+    wavePath.setAttribute('d', d);
+  }
+  // 空转维持缓慢衰减到 0（即使停止时也有轻微基线）
+  setInterval(()=>{ if(!running) addWaveSample(0.02); }, 1000/30);
+
+  /* ============ 内窥镜“深度”模块 ============ */
+  const scopeCanvas = document.getElementById('scopeCanvas');
+  const ctx = scopeCanvas.getContext('2d');
+  const depth = document.getElementById('depth');
+  const tilt = document.getElementById('tilt');
+  const focus = document.getElementById('focus');
+  const aperture = document.getElementById('aperture');
+  const jitter = document.getElementById('jitter');
+
+  const depthVal = document.getElementById('depthVal');
+  const tiltVal = document.getElementById('tiltVal');
+  const focusVal = document.getElementById('focusVal');
+  const apertureVal = document.getElementById('apertureVal');
+  const depthRead = document.getElementById('depthRead');
+  const tiltRead = document.getElementById('tiltRead');
+  const focusRead = document.getElementById('focusRead');
+  const apRead = document.getElementById('apRead');
+
+  const depthAdvance = document.getElementById('depthAdvance');
+  const depthRetract = document.getElementById('depthRetract');
+  const captureBtn = document.getElementById('capture');
+
+  function updHUD(){
+    depthVal.innerText = depth.value; depthRead.innerText = depth.value;
+    tiltVal.innerText = tilt.value;   tiltRead.innerText = tilt.value;
+    focusVal.innerText = Number(focus.value).toFixed(2); focusRead.innerText = Number(focus.value).toFixed(2);
+    apertureVal.innerText = Number(aperture.value).toFixed(2); apRead.innerText = Number(aperture.value).toFixed(2);
+    document.getElementById('jitterVal').innerText = Number(jitter.value).toFixed(2);
+  }
+  [depth,tilt,focus,aperture,jitter].forEach(el=>el.addEventListener('input', updHUD));
+  depthAdvance.onclick=()=>{ depth.value = Math.min(120, Number(depth.value)+5); updHUD(); };
+  depthRetract.onclick=()=>{ depth.value = Math.max(0, Number(depth.value)-5); updHUD(); };
+
+  // 刻度（12个）
+  const ticks = document.getElementById('ticks');
+  for(let i=0;i<12;i++){
+    const div=document.createElement('div'); div.className='tick';
+    div.style.transform=`translate(-1px,-4px) rotate(${(i/12)*360}deg)`;
+    div.style.left='50%'; div.style.top='50%';
+    ticks.appendChild(div);
+  }
+
+  // 生成程序纹理：仿“黏膜/褶皱”样式（抽象、非人体）
+  function drawScope(){
+    const w=scopeCanvas.width, h=scopeCanvas.height;
+    const t = performance.now()/1000;
+    ctx.clearRect(0,0,w,h);
+
+    // 根据深度/倾角决定视图偏移与缩放
+    const dmm = Number(depth.value);             // 0-120
+    const tiltDeg = Number(tilt.value);          // -30~30
+    const foc = Number(focus.value);             // 0.2~1.2
+    const ap = Number(aperture.value);           // 0.2~1.2
+    const jit = Number(jitter.value);            // 0~1
+
+    const scale = 1.0 + dmm/140;                 // 越深越“近”
+    const offx = Math.sin(t*0.6 + tiltDeg*0.1)*30 + (Math.random()-0.5)*jit*8;
+    const offy = Math.cos(t*0.5 - tiltDeg*0.1)*30 + (Math.random()-0.5)*jit*8;
+
+    ctx.save();
+    ctx.translate(w/2 + offx, h/2 + offy);
+    ctx.scale(scale, scale);
+    ctx.rotate(tiltDeg * Math.PI/180 * 0.15);
+
+    // 背景渐层
+    const g = ctx.createRadialGradient(0,0,120, 0,0,460);
+    g.addColorStop(0, `rgba(220, 100, 120, ${0.30*ap})`);
+    g.addColorStop(0.5, `rgba(180, 70, 100, ${0.45*ap})`);
+    g.addColorStop(1, `rgba(40, 10, 30, ${0.95})`);
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(0,0,520,0,Math.PI*2); ctx.fill();
+
+    // 褶皱（噪声正弦叠加）
+    for(let i=0;i<22;i++){
+      const r = 80 + i*16 + Math.sin(t*0.8 + i*0.7)*6;
+      ctx.strokeStyle = `rgba(255,215,230,${0.06*ap})`;
+      ctx.lineWidth = 2 + Math.sin(i*0.3+t)*0.7;
+      ctx.beginPath();
+      for(let a=0;a<=Math.PI*2+0.01;a+=0.06){
+        const nr = r + Math.sin(a*3 + t*1.5 + i*0.4)* (4 + i*0.12) * foc;
+        const x = Math.cos(a)*nr, y=Math.sin(a)*nr;
+        if(a===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
+      }
+      ctx.closePath(); ctx.stroke();
+    }
+
+    // 高光小点
+    for(let k=0;k<120;k++){
+      const ang = k*0.052 + t*0.3;
+      const rr  = 100 + (k%30)*9 + Math.sin(ang*2+t)*2;
+      const x = Math.cos(ang)*rr, y=Math.sin(ang)*rr;
+      const s = 1.2 + ((k%5)/5) * 2.3 * foc;
+      ctx.fillStyle = `rgba(255,255,255,${0.05+0.15*ap})`;
+      ctx.beginPath(); ctx.arc(x,y,s,0,Math.PI*2); ctx.fill();
+    }
+
+    ctx.restore();
+    requestAnimationFrame(drawScope);
+  }
+  updHUD(); requestAnimationFrame(drawScope);
+
+  // “拍照”（下载当前镜头PNG）
+  document.getElementById('capture').addEventListener('click', ()=>{
+    const a = document.createElement('a');
+    a.download = `virtual_scope_${Date.now()}.png`;
+    a.href = scopeCanvas.toDataURL('image/png');
+    a.click();
+    log('已保存镜头截图（模拟）。');
+  });
+
+  /* ============ 初始 & 细节绑定 ============ */
+  function init(){
+    reflect();
+    log('界面就绪 — 这是纯本地模拟，不会控制真实设备。');
+    window.addEventListener('beforeunload', ()=>{ if(running) stopSim(); });
+
+    document.querySelectorAll('input,select').forEach(el=>{
+      el.addEventListener('change', reflect);
+      el.addEventListener('input', reflect);
+    });
+
+    // 波形初始填充轻微基线
+    for(let i=0;i<60;i++) addWaveSample(0.02);
+  }
+  init();
+</script>
+</body>
+</html>
